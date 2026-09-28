@@ -46,8 +46,7 @@ sudo ./install_frp.sh
 3. 从本项目 GitHub Release 下载当前架构的 `frpc-web` 二进制
 4. 使用 `SHA256SUMS` 校验下载结果
 5. 安装并启动 `frpc-web.service`
-6. 生成访问令牌并保存在 `/etc/frpc-web.env`
-7. 如果不存在 `frpc.toml`，保持 `frpc.service` 停止且禁用
+6. 如果不存在 `frpc.toml`，保持 `frpc.service` 停止且禁用
 
 安装完成后访问：
 
@@ -55,7 +54,7 @@ sudo ./install_frp.sh
 http://<服务器IP>:7410
 ```
 
-使用安装输出中的访问令牌登录，然后填写完整的 `frpc.toml`。首次点击“保存并启动”后，控制台才会启用并启动 `frpc.service`。
+控制台无需登录，打开后即可填写完整的 `frpc.toml`。首次点击“保存并启动”后，控制台才会启用并启动 `frpc.service`。
 
 ## 默认路径
 
@@ -66,12 +65,9 @@ http://<服务器IP>:7410
 | frpc | `/usr/local/frpc/frpc` |
 | frpc 配置 | `/usr/local/frpc/frpc.toml` |
 | Web 控制台 | `/usr/local/frpc/web/frpc-web` |
-| Web 访问令牌 | `/etc/frpc-web.env` |
 | systemd 服务 | `/etc/systemd/system/frpc-web.service` |
 
-Web 控制台默认监听 `0.0.0.0:7410`。访问令牌用于控制台登录，但公网使用时仍应配置防火墙和带 TLS 的反向代理。
-
-可信内网中如需明确关闭登录，可在启动参数中添加 `--allow-unauthenticated` 并移除 `FRPC_WEB_TOKEN`。该参数不会由安装脚本默认启用；启用后任何能访问 7410 端口的设备都可以修改配置和控制 frpc 服务。
+Web 控制台默认监听 `0.0.0.0:7410`，不提供登录认证，适用于可信内网环境。任何能访问 7410 端口的设备都可以修改配置和控制 frpc 服务；请勿将端口暴露到公网，并使用防火墙限制来源。
 
 ## Web 控制台布局
 
@@ -113,7 +109,6 @@ systemctl restart frpc-web
 
 - 安装脚本以 root 身份写入 `/usr/local`、`/etc` 和 systemd 服务
 - Web 控制台拥有修改 frpc 配置和控制 `frpc.service` 的权限
-- `/etc/frpc-web.env` 权限为 `600`，不要公开其中的访问令牌
 - 默认直接使用 GitHub HTTPS。确需代理时可设置 `FRP_GITHUB_ACCEL_PREFIX`，脚本只接受 HTTPS 前缀
 - Release checksum 用于检测下载损坏；高安全场景仍建议增加独立签名校验
 - 不要直接将 `7410` 端口暴露到公网

@@ -1,10 +1,6 @@
 package control
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,25 +11,16 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 )
 
-const (
-	MaxRequestBody = MaxConfigSize + 64<<10
-	sessionCookie  = "frpc_web_session"
-)
+const MaxRequestBody = MaxConfigSize + 64<<10
 
 type Server struct {
-	Token      string
 	Static     fs.FS
 	Config     *ConfigManager
 	Service    SystemService
 	FRPCBin    string
 	ConfigPath string
-
-	sessionsMu sync.RWMutex
-	sessions   map[string]time.Time
 }
 
 type apiResponse struct {
@@ -43,77 +30,17 @@ type apiResponse struct {
 }
 
 func (s *Server) Handler() http.Handler {
-	if s.sessions == nil {
-		s.sessions = make(map[string]time.Time)
-	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/session", s.handleSession)
-	mux.HandleFunc("/api/status", s.requireAuth(s.handleStatus))
-	mux.HandleFunc("/api/config", s.requireAuth(s.handleConfig))
-	mux.HandleFunc("/api/logs", s.requireAuth(s.handleLogs))
-	mux.HandleFunc("/api/verify", s.requireAuth(s.handleVerify))
-	mux.HandleFunc("/api/service", s.requireAuth(s.handleService))
-	mux.HandleFunc("/api/", s.requireAuth(func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/api/status", s.handleStatus)
+	mux.HandleFunc("/api/config", s.handleConfig)
+	mux.HandleFunc("/api/logs", s.handleLogs)
+	mux.HandleFunc("/api/verify", s.handleVerify)
+	mux.HandleFunc("/api/service", s.handleService)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusNotFound, apiResponse{OK: false, Message: "Not Found"})
-	}))
+	})
 	mux.HandleFunc("/", s.handleStatic)
 	return s.securityHeaders(mux)
-}
-
-func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		if err := validateSameOrigin(r); err != nil {
-			writeJSON(w, http.StatusForbidden, apiResponse{OK: false, Message: err.Error()})
-			return
-		}
-		var request struct {
-			Token string `json:"token"`
-		}
-		if err := decodeJSON(w, r, &request); err != nil {
-			writeRequestError(w, err)
-			return
-		}
-		if s.Token != "" && !constantTimeEqual(request.Token, s.Token) {
-			writeJSON(w, http.StatusUnauthorized, apiResponse{OK: false, Message: "认证令牌不正确"})
-			return
-		}
-		sessionID, err := newSessionID()
-		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, apiResponse{OK: false, Message: "创建会话失败"})
-			return
-		}
-		expires := time.Now().Add(24 * time.Hour)
-		s.sessionsMu.Lock()
-		s.sessions[sessionID] = expires
-		s.sessionsMu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: sessionID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400})
-		writeJSON(w, http.StatusOK, apiResponse{OK: true, Data: map[string]any{"authenticated": true, "required": s.Token != ""}})
-	case http.MethodGet:
-		if s.Token != "" && !s.authenticated(r) {
-			writeJSON(w, http.StatusUnauthorized, apiResponse{OK: false, Data: map[string]any{"authenticated": false, "required": true}, Message: "需要登录"})
-			return
-		}
-		writeJSON(w, http.StatusOK, apiResponse{OK: true, Data: map[string]any{"authenticated": true, "required": s.Token != ""}})
-	case http.MethodDelete:
-		if s.Token != "" && !s.authenticated(r) {
-			writeJSON(w, http.StatusUnauthorized, apiResponse{OK: false, Message: "需要登录"})
-			return
-		}
-		if err := validateSameOrigin(r); err != nil {
-			writeJSON(w, http.StatusForbidden, apiResponse{OK: false, Message: err.Error()})
-			return
-		}
-		if cookie, err := r.Cookie(sessionCookie); err == nil {
-			s.sessionsMu.Lock()
-			delete(s.sessions, cookie.Value)
-			s.sessionsMu.Unlock()
-		}
-		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
-		writeJSON(w, http.StatusOK, apiResponse{OK: true, Message: "已退出登录"})
-	default:
-		methodNotAllowed(w)
-	}
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -290,38 +217,6 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Token != "" && !s.authenticated(r) {
-			writeJSON(w, http.StatusUnauthorized, apiResponse{OK: false, Message: "需要登录"})
-			return
-		}
-		next(w, r)
-	}
-}
-
-func (s *Server) authenticated(r *http.Request) bool {
-	if s.Token == "" {
-		return true
-	}
-	cookie, err := r.Cookie(sessionCookie)
-	if err != nil || cookie.Value == "" {
-		return false
-	}
-	s.sessionsMu.RLock()
-	expires, exists := s.sessions[cookie.Value]
-	s.sessionsMu.RUnlock()
-	if !exists || time.Now().After(expires) {
-		if exists {
-			s.sessionsMu.Lock()
-			delete(s.sessions, cookie.Value)
-			s.sessionsMu.Unlock()
-		}
-		return false
-	}
-	return true
-}
-
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -380,20 +275,6 @@ func validateSameOrigin(r *http.Request) error {
 		return errors.New("请求来源与当前控制台不一致")
 	}
 	return nil
-}
-
-func constantTimeEqual(left, right string) bool {
-	leftHash := sha256.Sum256([]byte(left))
-	rightHash := sha256.Sum256([]byte(right))
-	return subtle.ConstantTimeCompare(leftHash[:], rightHash[:]) == 1
-}
-
-func newSessionID() (string, error) {
-	buffer := make([]byte, 32)
-	if _, err := rand.Read(buffer); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
 func writeRequestError(w http.ResponseWriter, err error) {

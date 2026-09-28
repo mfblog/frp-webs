@@ -12,27 +12,7 @@
 {"ok": false, "message": "错误说明"}
 ```
 
-除 `GET/POST /api/session` 外，配置了访问令牌时其余接口均要求有效会话 Cookie。POST/DELETE 请求要求 `application/json`（无请求体的 DELETE 除外）并执行同源检查。
-
-## GET /api/session
-
-返回当前会话状态：
-
-```json
-{"ok": true, "data": {"authenticated": true, "required": true}}
-```
-
-## POST /api/session
-
-```json
-{"token": "安装时生成的访问令牌"}
-```
-
-成功后设置 HttpOnly、SameSite=Strict 会话 Cookie。
-
-## DELETE /api/session
-
-删除当前会话。
+API 不提供登录认证，访问控制应由内网、防火墙和网络策略负责。所有写请求要求 `application/json` 并执行同源检查；跨站来源会被拒绝。
 
 ## GET /api/status
 

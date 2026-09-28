@@ -6,11 +6,8 @@ import (
 	"flag"
 	"io/fs"
 	"log"
-	"net"
 	"net/http"
-	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"frpc-web/internal/control"
@@ -24,12 +21,7 @@ func main() {
 	frpcBin := flag.String("frpc-bin", "", "frpc 二进制路径")
 	frpcConfig := flag.String("frpc-config", "", "frpc 配置文件路径")
 	frpcService := flag.String("frpc-service", "frpc.service", "systemd 服务名")
-	authToken := flag.String("auth-token", os.Getenv("FRPC_WEB_TOKEN"), "控制台认证令牌（也可使用 FRPC_WEB_TOKEN）")
-	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "允许非本机地址免登录访问（仅限可信内网）")
 	flag.Parse()
-	if rejectsMissingAuthentication(*listen, *authToken, *allowUnauthenticated) {
-		log.Fatal("非本机监听必须配置 --auth-token 或 FRPC_WEB_TOKEN")
-	}
 
 	runner := control.ExecRunner{Timeout: 15 * time.Second}
 	paths, err := control.Discover(context.Background(), runner, control.DiscoverOptions{
@@ -52,7 +44,6 @@ func main() {
 		Service:  service,
 	}
 	application := &control.Server{
-		Token:      *authToken,
 		Static:     staticRoot,
 		Config:     manager,
 		Service:    service,
@@ -72,21 +63,4 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
-}
-
-func rejectsMissingAuthentication(address, token string, allowUnauthenticated bool) bool {
-	return token == "" && !allowUnauthenticated && !isLoopbackListen(address)
-}
-
-func isLoopbackListen(address string) bool {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		return false
-	}
-	host = strings.Trim(host, "[]")
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }

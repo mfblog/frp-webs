@@ -5,7 +5,6 @@ type Tab = 'config' | 'status' | 'logs'
 type Tone = 'info' | 'success' | 'warning' | 'danger'
 
 interface ApiEnvelope<T> { ok: boolean; data?: T; message?: string }
-interface SessionData { authenticated: boolean; required: boolean }
 interface DiscoveryInfo { binary?: string; config?: string; source?: string }
 interface StatusData {
   service: string
@@ -19,11 +18,6 @@ interface StatusData {
 interface ConfigData { content: string; exists: boolean; revision: string | null }
 
 const activeTab = ref<Tab>('config')
-const authenticated = ref(false)
-const authRequired = ref(false)
-const token = ref('')
-const authError = ref('')
-const authBusy = ref(false)
 
 const status = ref<StatusData>({
   service: 'frpc.service', active: 'unknown', enabled: 'unknown', version: 'unknown',
@@ -71,7 +65,6 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<ApiEnvelope
   } catch {
     throw new Error(`服务器返回了无法识别的响应（HTTP ${response.status}）`)
   }
-  if (response.status === 401 && path !== '/api/session') authenticated.value = false
   if (!response.ok || !payload.ok) throw new ApiError(payload.message || `请求失败（HTTP ${response.status}）`, response.status, payload)
   return payload
 }
@@ -79,33 +72,6 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<ApiEnvelope
 function notify(text: string, tone: Tone = 'info') {
   message.value = text
   messageTone.value = tone
-}
-
-async function checkSession() {
-  try {
-    const result = await api<SessionData>('/api/session')
-    authenticated.value = result.data?.authenticated === true
-    authRequired.value = result.data?.required === true
-  } catch {
-    authenticated.value = false
-    authRequired.value = true
-  }
-  if (authenticated.value || !authRequired.value) await bootConsole()
-}
-
-async function login() {
-  authBusy.value = true
-  authError.value = ''
-  try {
-    const result = await api<SessionData>('/api/session', { method: 'POST', body: JSON.stringify({ token: token.value }) })
-    authenticated.value = result.data?.authenticated === true
-    token.value = ''
-    await bootConsole()
-  } catch (error) {
-    authError.value = error instanceof Error ? error.message : '登录失败'
-  } finally {
-    authBusy.value = false
-  }
 }
 
 async function refreshStatus(silent = false) {
@@ -260,7 +226,7 @@ function keySave(event: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', keySave)
   window.addEventListener('beforeunload', preventDirtyUnload)
-  void checkSession()
+  void bootConsole()
 })
 
 function preventDirtyUnload(event: BeforeUnloadEvent) {
@@ -277,26 +243,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main v-if="!authenticated && authRequired" class="min-h-dvh grid place-items-center p-5">
-    <form class="panel w-full max-w-md p-6 sm:p-8" @submit.prevent="login">
-      <div class="mb-7 flex items-center gap-3">
-        <div class="grid size-10 place-items-center rounded-xl bg-blue-600 text-sm font-black text-white">FRP</div>
-        <div>
-          <h1 class="m-0 text-xl font-bold tracking-tight">frpc 控制台</h1>
-          <p class="mt-1 text-sm text-slate-600">输入安装时生成的访问令牌</p>
-        </div>
-      </div>
-      <label for="token" class="mb-2 block text-sm font-semibold">访问令牌</label>
-      <input id="token" v-model="token" type="password" autocomplete="current-password" autofocus required
-        class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500" placeholder="请输入访问令牌" />
-      <p v-if="authError" role="alert" class="mt-3 text-sm font-medium text-red-700">{{ authError }}</p>
-      <button type="submit" :disabled="authBusy" class="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">
-        {{ authBusy ? '正在验证…' : '进入控制台' }}
-      </button>
-    </form>
-  </main>
-
-  <div v-else class="app-shell">
+  <div class="app-shell">
     <header class="border-b border-slate-200 bg-white">
       <div class="mx-auto flex w-full max-w-[1480px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
         <div class="flex min-w-0 items-center gap-3">

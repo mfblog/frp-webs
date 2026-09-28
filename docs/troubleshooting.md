@@ -25,20 +25,6 @@ ss -lntp | grep 7410
 - 防火墙允许受信客户端访问 TCP 7410
 - 端口没有被其他程序占用
 
-## 忘记访问令牌
-
-root 用户可以读取：
-
-```bash
-sudo sed -n 's/^FRPC_WEB_TOKEN=//p' /etc/frpc-web.env
-```
-
-修改令牌后需要重启：
-
-```bash
-sudo systemctl restart frpc-web
-```
-
 ## 控制台提示未发现 frpc
 
 ```bash

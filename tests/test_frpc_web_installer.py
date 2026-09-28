@@ -3,7 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = REPO_ROOT / "install_frp.sh"
 
@@ -77,11 +76,11 @@ install_frpc
     def test_web_console_service_uses_binary_and_all_interfaces(self) -> None:
         function_source = extract_shell_function("write_frpc_web_service", "setup_frpc_web_panel")
         self.assertIn("ExecStart=${FRPC_WEB_BINARY} --listen 0.0.0.0:7410", function_source)
-        self.assertIn("EnvironmentFile=${FRPC_WEB_ENV}", function_source)
+        self.assertNotIn("EnvironmentFile=", function_source)
         self.assertNotIn("127.0.0.1", function_source)
 
     def test_release_download_requires_checksum(self) -> None:
-        function_source = extract_shell_function("download_frpc_web_binary", "write_frpc_web_env")
+        function_source = extract_shell_function("download_frpc_web_binary", "write_frpc_web_service")
         self.assertIn('checksum_name="SHA256SUMS"', function_source)
         self.assertIn("sha256sum", function_source)
         self.assertIn("拒绝安装未经校验", function_source)
@@ -90,33 +89,52 @@ install_frpc
     def test_setup_downloads_binary_and_enables_service(self) -> None:
         function_source = extract_shell_function("setup_frpc_web_panel", "enable_service")
         self.assertIn('download_frpc_web_binary "${arch}"', function_source)
-        self.assertIn("write_frpc_web_env", function_source)
-        self.assertIn("write_frpc_web_service", function_source)
+        self.assertIn('rm -f "${FRPC_WEB_LEGACY_ENV}"', function_source)
+        self.assertLess(function_source.index("write_frpc_web_service"), function_source.index('rm -f "${FRPC_WEB_LEGACY_ENV}"'))
         self.assertIn('enable_service "frpc-web.service"', function_source)
         self.assertIn("监听地址: 0.0.0.0:7410", function_source)
 
-    def test_existing_token_is_preserved(self) -> None:
-        env_function = extract_shell_function("write_frpc_web_env", "apply_frpc_web_env")
-        apply_function = extract_shell_function("apply_frpc_web_env", "write_frpc_web_service")
+    def test_setup_removes_legacy_auth_environment_file(self) -> None:
+        setup_function = extract_shell_function("setup_frpc_web_panel", "enable_service")
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / "frpc-web.env"
-            token = "0123456789abcdef01234567"
-            env_path.write_text(f"FRPC_WEB_TOKEN={token}\n", encoding="utf-8")
+            env_path.write_text("FRPC_WEB_TOKEN=legacy-token\n", encoding="utf-8")
             shell = f"""
 set -euo pipefail
-FRPC_WEB_ENV={str(env_path)!r}
-FRPC_WEB_ACCESS_TOKEN=""
-random_token() {{ printf '%s\n' ffffffffffffffffffffffff; }}
-{env_function}
-{apply_function}
-write_frpc_web_env
-printf '%s\n' "${{FRPC_WEB_ACCESS_TOKEN}}"
+FRPC_WEB_LEGACY_ENV={str(env_path)!r}
+FRPC_WEB_SERVICE={str(Path(temp_dir) / 'frpc-web.service')!r}
+detect_arch() {{ printf '%s\\n' amd64; }}
+download_frpc_web_binary() {{ :; }}
+backup_file() {{ :; }}
+write_frpc_web_service() {{ :; }}
+enable_service() {{ :; }}
+{setup_function}
+setup_frpc_web_panel
 """
             result = self.run_bash(shell)
             self.assertEqual(0, result.returncode, result.stderr)
-            self.assertEqual(token, result.stdout.strip())
-            self.assertEqual(f"FRPC_WEB_TOKEN={token}\n", env_path.read_text(encoding="utf-8"))
-            self.assertEqual(0o600, env_path.stat().st_mode & 0o777)
+            self.assertFalse(env_path.exists())
+
+    def test_setup_failure_preserves_legacy_environment_file(self) -> None:
+        setup_function = extract_shell_function("setup_frpc_web_panel", "enable_service")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env_path = Path(temp_dir) / "frpc-web.env"
+            env_path.write_text("FRPC_WEB_TOKEN=legacy-token\n", encoding="utf-8")
+            shell = f"""
+set -euo pipefail
+FRPC_WEB_LEGACY_ENV={str(env_path)!r}
+FRPC_WEB_SERVICE={str(Path(temp_dir) / 'frpc-web.service')!r}
+detect_arch() {{ printf '%s\\n' amd64; }}
+download_frpc_web_binary() {{ :; }}
+backup_file() {{ :; }}
+write_frpc_web_service() {{ :; }}
+enable_service() {{ return 1; }}
+{setup_function}
+setup_frpc_web_panel
+"""
+            result = self.run_bash(shell)
+            self.assertNotEqual(0, result.returncode)
+            self.assertTrue(env_path.exists())
 
     def test_install_without_config_deploys_web_without_starting_frpc(self) -> None:
         calls = self.run_install_frpc("missing")

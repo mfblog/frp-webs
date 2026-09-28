@@ -9,7 +9,7 @@ readonly FRPS_DIR="/usr/local/frps"
 readonly FRPC_DIR="/usr/local/frpc"
 readonly FRPC_WEB_DIR="/usr/local/frpc/web"
 readonly FRPC_WEB_BINARY="/usr/local/frpc/web/frpc-web"
-readonly FRPC_WEB_ENV="/etc/frpc-web.env"
+readonly FRPC_WEB_LEGACY_ENV="/etc/frpc-web.env"
 readonly FRPS_SERVICE="/etc/systemd/system/frps.service"
 readonly FRPC_SERVICE="/etc/systemd/system/frpc.service"
 readonly FRPC_WEB_SERVICE="/etc/systemd/system/frpc-web.service"
@@ -17,8 +17,6 @@ readonly FRPC_WEB_SERVICE="/etc/systemd/system/frpc-web.service"
 TEMP_DIR=""
 RELEASE_TAG=""
 RELEASE_EXTRACT_DIR=""
-FRPC_WEB_ACCESS_TOKEN=""
-
 cleanup() {
   if [[ -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
     rm -rf "${TEMP_DIR}"
@@ -405,30 +403,6 @@ download_frpc_web_binary() {
   echo "已安装 frpc Web 控制台 ${tag_name} 到 ${FRPC_WEB_BINARY}"
 }
 
-write_frpc_web_env() {
-  local access_token=""
-
-  if [[ -f "${FRPC_WEB_ENV}" ]]; then
-    access_token="$(sed -n 's/^FRPC_WEB_TOKEN=//p' "${FRPC_WEB_ENV}" | head -n 1)"
-  fi
-  if [[ ! "${access_token}" =~ ^[[:xdigit:]]{24,128}$ ]]; then
-    access_token="$(random_token)"
-  fi
-
-  (umask 077; apply_frpc_web_env "${access_token}")
-  FRPC_WEB_ACCESS_TOKEN="${access_token}"
-}
-
-apply_frpc_web_env() {
-  local access_token="${1}"
-  local temp_env
-
-  temp_env="$(mktemp "${FRPC_WEB_ENV}.XXXXXX")"
-  printf 'FRPC_WEB_TOKEN=%s\n' "${access_token}" >"${temp_env}"
-  chmod 600 "${temp_env}"
-  mv -f "${temp_env}" "${FRPC_WEB_ENV}"
-}
-
 write_frpc_web_service() {
   cat >"${FRPC_WEB_SERVICE}" <<EOF
 [Unit]
@@ -439,7 +413,6 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=${FRPC_WEB_DIR}
-EnvironmentFile=${FRPC_WEB_ENV}
 ExecStart=${FRPC_WEB_BINARY} --listen 0.0.0.0:7410 --frpc-bin ${FRPC_DIR}/frpc --frpc-config ${FRPC_DIR}/frpc.toml --frpc-service frpc.service
 Restart=on-failure
 RestartSec=5s
@@ -457,18 +430,16 @@ setup_frpc_web_panel() {
   arch="$(detect_arch)"
 
   download_frpc_web_binary "${arch}"
-  write_frpc_web_env
   backup_file "${FRPC_WEB_SERVICE}"
   write_frpc_web_service
   enable_service "frpc-web.service"
+  rm -f "${FRPC_WEB_LEGACY_ENV}"
 
   echo "frpc Web 控制台已部署。"
   echo "监听地址: 0.0.0.0:7410"
   echo "访问地址: http://<服务器IP>:7410"
-  echo "访问令牌: ${FRPC_WEB_ACCESS_TOKEN}"
-  echo "令牌文件: ${FRPC_WEB_ENV}（权限 600）"
   echo "服务管理: systemctl status|restart|stop frpc-web"
-  echo "提示: 监听所有网卡时请配置防火墙；公网访问仍应使用 TLS 反向代理。"
+  echo "提示: 控制台无登录认证，仅限可信内网访问，并请用防火墙限制来源；不要直接暴露到公网。"
 }
 
 enable_service() {
@@ -771,7 +742,7 @@ uninstall_frpc() {
   disable_service_if_exists "frpc.service"
 
   rm -f "${FRPC_WEB_SERVICE}"
-  rm -f "${FRPC_WEB_ENV}"
+  rm -f "${FRPC_WEB_LEGACY_ENV}"
   rm -f "${FRPC_SERVICE}"
   rm -rf "${FRPC_DIR}"
 
@@ -815,7 +786,6 @@ show_install_status() {
   echo "===== frpc Web 控制台状态 ====="
   echo "目录: ${FRPC_WEB_DIR}"
   echo "二进制: $([[ -x "${FRPC_WEB_BINARY}" ]] && echo 已安装 || echo 未安装)"
-  echo "令牌文件: $([[ -f "${FRPC_WEB_ENV}" ]] && echo 存在 || echo 不存在)"
   echo "systemd 服务: $(service_state "frpc-web.service")"
   echo "开机自启: $(service_enabled_state "frpc-web.service")"
   echo "监听地址: 0.0.0.0:7410"

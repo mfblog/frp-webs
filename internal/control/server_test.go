@@ -13,52 +13,66 @@ import (
 	"testing"
 )
 
-func TestAuthenticationFlowAndCookieAttributes(t *testing.T) {
-	runner := runnerFunc(func(context.Context, string, ...string) (string, error) {
-		return "inactive", errors.New("inactive")
+func TestAPIsAreAccessibleWithoutAuthentication(t *testing.T) {
+	runner := runnerFunc(func(_ context.Context, command string, _ ...string) (string, error) {
+		if command == "systemctl" {
+			return "inactive", errors.New("inactive")
+		}
+		if command == "journalctl" {
+			return "test logs", nil
+		}
+		return "0.68.1", nil
 	})
-	server := &Server{Token: "secret", Service: SystemService{Runner: runner, Name: "frpc.service"}, FRPCBin: "/bin/frpc", ConfigPath: "/tmp/frpc.toml"}
+	server := &Server{
+		Service:    SystemService{Runner: runner, Name: "frpc.service"},
+		FRPCBin:    "/bin/frpc",
+		ConfigPath: filepath.Join(t.TempDir(), "frpc.toml"),
+		Config: &ConfigManager{
+			Path: filepath.Join(t.TempDir(), "frpc.toml"),
+			Verifier: verifierFunc(func(context.Context, string) error {
+				return nil
+			}),
+		},
+	}
 	handler := server.Handler()
 
-	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthorized status = %d", unauthorized.Code)
+	for _, path := range []string{"/api/status", "/api/config", "/api/logs?lines=10", "/api/verify"} {
+		t.Run(path, func(t *testing.T) {
+			method := http.MethodGet
+			var body *strings.Reader
+			if path == "/api/verify" {
+				method = http.MethodPost
+				body = strings.NewReader(`{"content":"valid = true"}`)
+			}
+			response := httptest.NewRecorder()
+			var request *http.Request
+			if body == nil {
+				request = httptest.NewRequest(method, path, nil)
+			} else {
+				request = httptest.NewRequest(method, path, body)
+				request.Header.Set("Content-Type", "application/json")
+			}
+			handler.ServeHTTP(response, request)
+			if response.Code == http.StatusUnauthorized {
+				t.Fatalf("request unexpectedly required authentication: %s", response.Body.String())
+			}
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 
-	wrong := httptest.NewRecorder()
-	wrongRequest := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"token":"wrong"}`))
-	wrongRequest.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(wrong, wrongRequest)
-	if wrong.Code != http.StatusUnauthorized {
-		t.Fatalf("wrong token status = %d", wrong.Code)
-	}
-
-	login := httptest.NewRecorder()
-	loginRequest := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"token":"secret"}`))
-	loginRequest.Header.Set("Content-Type", "application/json")
-	handler.ServeHTTP(login, loginRequest)
-	if login.Code != http.StatusOK {
-		t.Fatalf("login status = %d body=%s", login.Code, login.Body.String())
-	}
-	cookies := login.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
-		t.Fatalf("login cookies = %#v", cookies)
-	}
-
-	authorized := httptest.NewRecorder()
-	authorizedRequest := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	authorizedRequest.AddCookie(cookies[0])
-	handler.ServeHTTP(authorized, authorizedRequest)
-	if authorized.Code != http.StatusOK {
-		t.Fatalf("authorized status = %d body=%s", authorized.Code, authorized.Body.String())
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/session", nil))
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("removed session API status = %d body=%s", response.Code, response.Body.String())
 	}
 }
 
 func TestWriteRejectsCrossSiteRequest(t *testing.T) {
 	server := &Server{}
 	handler := server.Handler()
-	request := httptest.NewRequest(http.MethodPost, "/api/session", strings.NewReader(`{"token":""}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/verify", strings.NewReader(`{"content":"valid = true"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Sec-Fetch-Site", "cross-site")
 	response := httptest.NewRecorder()
@@ -73,7 +87,7 @@ func TestJSONRequestBodyLimit(t *testing.T) {
 	server := &Server{}
 	handler := server.Handler()
 	body := bytes.Repeat([]byte("x"), MaxRequestBody+1)
-	request := httptest.NewRequest(http.MethodPost, "/api/session", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/config", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 

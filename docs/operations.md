@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `frps.service` | `/usr/local/frps/frps` | `/usr/local/frps/frps.toml` |
 | `frpc.service` | `/usr/local/frpc/frpc` | `/usr/local/frpc/frpc.toml` |
-| `frpc-web.service` | `/usr/local/frpc/web/frpc-web` | `/etc/frpc-web.env` |
+| `frpc-web.service` | `/usr/local/frpc/web/frpc-web` | 无 |
 
 `frpc-web` 是包含 Vue 静态资源的单一 Go 二进制，不依赖 Python、Node.js 或独立页面文件。
 
@@ -18,9 +18,8 @@
 4. 如果没有配置，保持 `frpc.service` disabled/stopped。
 5. 从 GitHub Release 下载当前 CPU 架构对应的 `frpc-web-linux-*`。
 6. 下载 `SHA256SUMS` 并校验控制台二进制。
-7. 生成或保留 `/etc/frpc-web.env` 中的访问令牌。
-8. 写入并启动 `frpc-web.service`。
-9. 用户在网页保存有效配置后，再启用并启动 frpc。
+7. 写入并启动 `frpc-web.service`。
+8. 用户在网页保存有效配置后，再启用并启动 frpc。
 
 ## Web 控制台启动参数
 
@@ -40,12 +39,8 @@ systemd 默认执行：
 - `--frpc-bin`
 - `--frpc-config`
 - `--frpc-service`
-- `--auth-token`
-- `--allow-unauthenticated`：显式允许非本机地址免登录访问，仅适用于可信内网
 
-认证令牌也可以通过 `FRPC_WEB_TOKEN` 环境变量提供。
-
-非 loopback 监听默认必须配置令牌。只有显式添加 `--allow-unauthenticated` 后才允许免登录运行；安装脚本不会默认添加该参数。
+控制台不提供登录认证；默认监听所有网卡，只应在可信内网中使用，并通过防火墙限制访问来源。
 
 如果没有显式指定 frpc 路径，控制台依次检查：
 
@@ -68,19 +63,17 @@ systemd 默认执行：
 
 ## 更新与卸载
 
-更新 frpc 时会校验现有配置、备份旧二进制，并在新版本启动失败时恢复旧版本。Web 控制台会同时刷新到最新 GitHub Release，已有访问令牌保持不变。
+更新 frpc 时会校验现有配置、备份旧二进制，并在新版本启动失败时恢复旧版本。Web 控制台会同时刷新到最新 GitHub Release。
 
 卸载 frpc 会删除：
 
 - `/usr/local/frpc`
 - `frpc.service`
 - `frpc-web.service`
-- `/etc/frpc-web.env`
 
 ## 网络和权限
 
 - 默认监听 `0.0.0.0:7410`
-- 控制台使用访问令牌和 HttpOnly、SameSite=Strict 会话 Cookie
-- 写接口检查 Origin 和 `Sec-Fetch-Site`
-- 这不能替代 TLS、防火墙和网络访问控制
-- 推荐仅对受信内网开放，公网访问应放在 HTTPS 反向代理之后
+- 控制台不提供登录认证，任何可访问端口的客户端都能修改 frpc 配置并控制服务
+- 写接口检查 Origin 和 `Sec-Fetch-Site`，这只能缓解跨站请求，不能代替身份认证
+- 必须通过防火墙/网络策略限制到受信内网客户端；不要将端口直接暴露到公网
