@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  color: oklch(24% 0.025 255);
+  background: oklch(97.8% 0.006 255);
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --bg: oklch(97.8% 0.006 255);
+  --surface: oklch(100% 0 0);
+  --surface-muted: oklch(96.2% 0.008 255);
+  --border: oklch(88.5% 0.014 255);
+  --ink: oklch(24% 0.025 255);
+  --muted: oklch(45% 0.025 255);
+  --primary: oklch(55% 0.2 257);
+  --primary-dark: oklch(47% 0.2 257);
+  --success: oklch(50% 0.12 170);
+  --warning: oklch(62% 0.16 70);
+  --danger: oklch(55% 0.2 25);
+}
+
+* { box-sizing: border-box; }
+html, body, #app { min-height: 100%; }
+body { margin: 0; min-width: 320px; background: var(--bg); }
+button, textarea, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+:focus-visible { outline: 3px solid color-mix(in oklch, var(--primary) 35%, transparent); outline-offset: 2px; }
+
+.app-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.workspace {
+  width: min(1480px, 100%);
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(300px, 3fr);
+  grid-template-areas: "editor side" "logs logs";
+  gap: 16px;
+  align-content: start;
+}
+
+.panel {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.05);
+}
+
+.editor-panel { grid-area: editor; min-height: 650px; display: flex; flex-direction: column; }
+.side-panel { grid-area: side; align-self: start; }
+.logs-panel { grid-area: logs; min-height: 0; display: flex; flex-direction: column; }
+
+.log-scroll {
+  height: clamp(260px, 34vh, 430px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
+}
+
+.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.mobile-tabs { display: none; }
+
+@media (max-width: 1023px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "editor" "side" "logs";
+  }
+  .editor-panel { min-height: 580px; }
+}
+
+@media (max-width: 719px) {
+  .workspace { padding: 12px; display: block; }
+  .mobile-tabs { display: grid; grid-template-columns: repeat(3, 1fr); margin-bottom: 12px; }
+  .workspace > .panel { display: none; }
+  .workspace > .panel.mobile-active { display: flex; }
+  .side-panel.mobile-active { display: block; }
+  .editor-panel { min-height: calc(100dvh - 190px); }
+  .logs-panel { height: calc(100dvh - 190px); }
+  .log-scroll { height: auto; flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; }
+}

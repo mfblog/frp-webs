@@ -1,0 +1,7 @@
+/frpc-web
+/dist/
+frpc.toml
+__pycache__/
+*.py[cod]
+web/node_modules/
+web/dist/

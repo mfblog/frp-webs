@@ -1,141 +1,86 @@
 # 运维说明
 
-本文档描述当前脚本的运行边界、安装路径、更新与回滚语义。
+## 服务与文件
 
-## 环境要求
+| 服务 | 二进制 | 配置/环境文件 |
+| --- | --- | --- |
+| `frps.service` | `/usr/local/frps/frps` | `/usr/local/frps/frps.toml` |
+| `frpc.service` | `/usr/local/frpc/frpc` | `/usr/local/frpc/frpc.toml` |
+| `frpc-web.service` | `/usr/local/frpc/web/frpc-web` | `/etc/frpc-web.env` |
 
-- 操作系统：`Debian 12`
-- `systemd`
-- `root`
-- 支持架构：`amd64`、`arm64`、`arm`、`386`
-- 能访问 GitHub API，或能访问脚本内配置的加速代理
+`frpc-web` 是包含 Vue 静态资源的单一 Go 二进制，不依赖 Python、Node.js 或独立页面文件。
 
-## 安装内容
+## frpc 安装语义
 
-### frps
+1. 下载并安装 frpc。
+2. 写入 `frpc.service`。
+3. 如果已有 `frpc.toml`，先校验再决定是否启动；不会覆盖原配置。
+4. 如果没有配置，保持 `frpc.service` disabled/stopped。
+5. 从 GitHub Release 下载当前 CPU 架构对应的 `frpc-web-linux-*`。
+6. 下载 `SHA256SUMS` 并校验控制台二进制。
+7. 生成或保留 `/etc/frpc-web.env` 中的访问令牌。
+8. 写入并启动 `frpc-web.service`。
+9. 用户在网页保存有效配置后，再启用并启动 frpc。
 
-- 安装目录：`/usr/local/frps`
-- 二进制：`/usr/local/frps/frps`
-- 配置：`/usr/local/frps/frps.toml`
-- 服务：`/etc/systemd/system/frps.service`
+## Web 控制台启动参数
 
-### frpc
+systemd 默认执行：
 
-- 安装目录：`/usr/local/frpc`
-- 二进制：`/usr/local/frpc/frpc`
-- 配置：`/usr/local/frpc/frpc.toml`
-- 服务：`/etc/systemd/system/frpc.service`
+```text
+/usr/local/frpc/web/frpc-web \
+  --listen 0.0.0.0:7410 \
+  --frpc-bin /usr/local/frpc/frpc \
+  --frpc-config /usr/local/frpc/frpc.toml \
+  --frpc-service frpc.service
+```
 
-### frpc Web 控制台
+支持参数：
 
-- 目录：`/usr/local/frpc/web`
-- 程序：`/usr/local/frpc/web/frpc_web.py`
-- 页面：`/usr/local/frpc/web/index.html`
-- 配置：`/usr/local/frpc/web/panel.json`
-- 服务：`/etc/systemd/system/frpc-web.service`
+- `--listen`
+- `--frpc-bin`
+- `--frpc-config`
+- `--frpc-service`
+- `--auth-token`
+- `--allow-unauthenticated`：显式允许非本机地址免登录访问，仅适用于可信内网
 
-## 配置生成规则
+认证令牌也可以通过 `FRPC_WEB_TOKEN` 环境变量提供。
 
-- `frps` 生成的是最小可运行配置，可选开启 Dashboard
-- `frpc` 默认只生成一个 `tcp` 代理示例
-- 配置文件权限会设置为 `600`
-- 覆盖旧配置前会生成 `.bak.<时间戳>` 备份
+非 loopback 监听默认必须配置令牌。只有显式添加 `--allow-unauthenticated` 后才允许免登录运行；安装脚本不会默认添加该参数。
 
-## 安装语义
+如果没有显式指定 frpc 路径，控制台依次检查：
 
-### 安装 frps
+1. `frpc.service` 的 `ExecStart`
+2. `/usr/local/frpc/frpc`
+3. `PATH` 中的 `frpc`
 
-流程：
+配置路径依次使用显式参数、`ExecStart` 中的 `-c/--config`，最后回退到 frpc 二进制同目录的 `frpc.toml`。
 
-1. 下载新版本二进制
-2. 安装到 `/usr/local/frps`
-3. 生成或覆盖 `frps.toml`
-4. 校验配置
-5. 写入 `frps.service`
-6. 启动并验证服务状态
+## 配置保存与回滚
 
-### 安装 frpc
+- 请求体和配置正文最大为 1 MiB
+- 保存前执行 `frpc verify -c <临时文件>`
+- 配置使用 `0600` 权限和同目录原子重命名写入
+- 旧配置备份为 `frpc.toml.bak.<时间戳>`
+- 保存请求携带 revision；磁盘内容已变化时返回 HTTP 409
+- 首次保存并启动失败：删除本次新配置，恢复原 enabled/active 状态
+- 已有配置重启失败：写回旧配置并恢复服务状态
+- `systemctl restart` 后会有限轮询 `is-active`，避免立即退出时误报成功
 
-流程：
+## 更新与卸载
 
-1. 下载新版本二进制
-2. 安装到 `/usr/local/frpc`
-3. 生成或覆盖 `frpc.toml`
-4. 校验配置
-5. 写入 `frpc.service`
-6. 启动并验证服务状态
-7. 如用户选择，再部署 `frpc Web 控制台`
+更新 frpc 时会校验现有配置、备份旧二进制，并在新版本启动失败时恢复旧版本。Web 控制台会同时刷新到最新 GitHub Release，已有访问令牌保持不变。
 
-## 更新语义
+卸载 frpc 会删除：
 
-### frps / frpc 更新
-
-更新前会：
-
-1. 下载新版本到临时目录
-2. 使用新版本二进制校验当前配置
-
-只有校验通过后，才会：
-
-1. 停止旧服务
-2. 替换二进制
-3. 重新启动服务
-
-如果新版本启动失败：
-
-1. 自动恢复上一版二进制
-2. 尝试重新拉起旧服务
-
-当前回滚范围：
-
-- 会回滚 `frps` / `frpc` 二进制与 `LICENSE`
-- 不会自动回滚你手工修改过的配置文件内容
-- 不会回滚外部依赖或系统级环境
-
-## Web 控制台保存语义
-
-Web 控制台保存配置时会：
-
-1. 先用 `frpc verify -c` 校验新配置
-2. 生成旧配置备份
-3. 原子写入新配置
-
-如果选择“保存并重启”：
-
-- `frpc` 重启成功：保留新配置
-- `frpc` 重启失败：自动恢复到上一份配置，并尝试恢复服务
-
-## 卸载语义
-
-### 卸载 frps
-
-会删除：
-
-- `frps.service`
-- `/usr/local/frps`
-
-### 卸载 frpc
-
-会删除：
-
+- `/usr/local/frpc`
 - `frpc.service`
 - `frpc-web.service`
-- `/usr/local/frpc`
+- `/etc/frpc-web.env`
 
-不会主动清理：
+## 网络和权限
 
-- 你手工复制到其他目录的备份文件
-- 系统包管理器安装的依赖
-
-## 安全边界
-
-- 脚本以 `root` 运行
-- 当前默认使用第三方 HTTP 加速代理下载 release 资源
-- `frpc Web 控制台` 当前仍然没有内建鉴权
-- 默认提示监听 `0.0.0.0:7410`
-
-因此建议：
-
-- 仅在受控机器上运行
-- 仅在本机或受限内网中使用 Web 控制台
-- 如需远程访问，请自行增加反向代理、TLS、鉴权和防火墙策略
+- 默认监听 `0.0.0.0:7410`
+- 控制台使用访问令牌和 HttpOnly、SameSite=Strict 会话 Cookie
+- 写接口检查 Origin 和 `Sec-Fetch-Site`
+- 这不能替代 TLS、防火墙和网络访问控制
+- 推荐仅对受信内网开放，公网访问应放在 HTTPS 反向代理之后

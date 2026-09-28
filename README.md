@@ -1,56 +1,33 @@
-# frp 一键安装脚本
+# frp 一键安装脚本与 Web 控制台
 
-一个面向 `Debian 12` 的 `frp` 安装脚本，支持交互式安装 `frps` 服务端、`frpc` 客户端、更新、卸载，以及 `frpc Web 控制台`。
+面向 Debian 12/systemd 的 frp 安装脚本，支持安装、更新和卸载 `frps` / `frpc`。安装 `frpc` 后会额外部署一个由 Go 编写的 Web 控制台，用户通过网页完成首次 `frpc.toml` 配置、服务控制和日志查看。
 
-![frpc Web 控制台预览](./image.png)
+## 主要能力
 
-## 先看风险
+- 保留 Shell 脚本原有的 frps/frpc 安装、更新、回滚和卸载流程
+- 安装 frpc 时不生成示例配置，首次配置在网页中完成
+- Go 后端与 Vue 3 + TypeScript + Tailwind CSS 前端编译为单一二进制
+- 自动发现 frpc 二进制、配置路径和 `frpc.service`
+- 配置校验、原子保存、revision 冲突保护和启动失败回滚
+- 通过 systemd 启动、停止、重启 frpc
+- 页面内查看 journalctl 日志，支持上下滚动、自动跟随和跳到最新
+- 支持 `amd64`、`arm64`、`armv7` 和 `386`
 
-- 脚本要求 `root` 权限运行，并会写入 `systemd` 服务与 `/usr/local/*` 安装目录。
-- 当前默认启用了第三方 GitHub 加速代理：`http://154.17.224.29/rproxy?url=`。这是明文 HTTP 下载链路，当前版本仍未内置 checksum / 签名校验。
-- `frpc Web 控制台` 默认提示监听 `0.0.0.0:7410`，且当前实现没有登录鉴权；如果暴露到公网，相当于直接开放了 `frpc` 管理入口。
+## 安装
 
-如果你的使用场景对供应链安全或控制面暴露比较敏感，请先阅读：
+要求：
 
-- [运维说明](./docs/operations.md)
-- [Web 控制台 API](./docs/web-console-api.md)
-- [排障说明](./docs/troubleshooting.md)
-
-## 功能特性
-
-- 交互式安装 `frps` / `frpc`
-- 自动生成 `systemd` 服务
-- 生成基础 `frps.toml` / `frpc.toml`
-- 支持更新与卸载
-- 提供 `frpc Web 控制台`
-- 支持查看当前安装状态
-- 更新流程在切换前会先校验配置
-- `frpc` / `frps` 更新后若启动失败，会自动回滚上一版二进制并尝试恢复服务
-- Web 控制台“保存并重启”在重启失败时会自动回滚到上一份配置
-
-## 前置条件
-
-- 操作系统：`Debian 12`
-- init 系统：`systemd`
-- 权限：`root`
-- 网络：能访问 GitHub API，或能访问脚本内配置的加速代理
-- 架构：`amd64`、`arm64`、`arm`、`386`
-
-脚本会自动安装这些依赖：
-
-- `curl`
-- `jq`
-- `tar`
-- `python3`
-
-## 快速开始
+- Debian 12
+- root 权限
+- systemd
+- 可以访问 GitHub API/Release，或显式配置可信 HTTPS 下载代理
 
 ```bash
 chmod +x install_frp.sh
 sudo ./install_frp.sh
 ```
 
-运行后菜单如下：
+菜单：
 
 ```text
 1) 安装 frps 服务端
@@ -62,83 +39,64 @@ sudo ./install_frp.sh
 7) 查看当前安装状态
 ```
 
-## 安装路径
+安装 frpc 时，脚本会：
 
-- `frps`：`/usr/local/frps`
-- `frpc`：`/usr/local/frpc`
-- `frpc Web 控制台`：`/usr/local/frpc/web`
+1. 安装 `/usr/local/frpc/frpc`
+2. 创建 `frpc.service`
+3. 从本项目 GitHub Release 下载当前架构的 `frpc-web` 二进制
+4. 使用 `SHA256SUMS` 校验下载结果
+5. 安装并启动 `frpc-web.service`
+6. 生成访问令牌并保存在 `/etc/frpc-web.env`
+7. 如果不存在 `frpc.toml`，保持 `frpc.service` 停止且禁用
 
-关键文件：
+安装完成后访问：
 
-- `frps` 配置：`/usr/local/frps/frps.toml`
-- `frpc` 配置：`/usr/local/frpc/frpc.toml`
-- Web 控制台配置：`/usr/local/frpc/web/panel.json`
+```text
+http://<服务器IP>:7410
+```
 
-## Web 控制台说明
+使用安装输出中的访问令牌登录，然后填写完整的 `frpc.toml`。首次点击“保存并启动”后，控制台才会启用并启动 `frpc.service`。
 
-安装 `frpc` 时，脚本会询问是否部署 `frpc Web 控制台`。
+## 默认路径
 
-控制台支持：
+| 内容 | 路径 |
+| --- | --- |
+| frps | `/usr/local/frps/frps` |
+| frps 配置 | `/usr/local/frps/frps.toml` |
+| frpc | `/usr/local/frpc/frpc` |
+| frpc 配置 | `/usr/local/frpc/frpc.toml` |
+| Web 控制台 | `/usr/local/frpc/web/frpc-web` |
+| Web 访问令牌 | `/etc/frpc-web.env` |
+| systemd 服务 | `/etc/systemd/system/frpc-web.service` |
 
-- 在线编辑 `frpc.toml`
-- 在线校验配置
-- 保存配置
-- 保存并重启 `frpc`
-- 查看运行状态
-- 查看最近日志
+Web 控制台默认监听 `0.0.0.0:7410`。访问令牌用于控制台登录，但公网使用时仍应配置防火墙和带 TLS 的反向代理。
 
-页面交互已补充：
+可信内网中如需明确关闭登录，可在启动参数中添加 `--allow-unauthenticated` 并移除 `FRPC_WEB_TOKEN`。该参数不会由安装脚本默认启用；启用后任何能访问 7410 端口的设备都可以修改配置和控制 frpc 服务。
 
-- 操作中的 loading / 禁用态
-- 配置未保存提示
-- 刷新前覆盖确认
-- `Ctrl/Cmd + S` 快捷保存
-- 日志弹窗键盘交互与焦点管理
+## Web 控制台布局
 
-默认提示输入：
+- 顶部：frpc 路径、版本和运行状态
+- 左侧：`frpc.toml` 编辑器和保存操作
+- 右侧：systemd 状态、启动、重启和停止
+- 底部：可滚动日志面板
+- 移动端：配置、状态和日志三个页签
 
-- 监听地址：`0.0.0.0`
-- 监听端口：`7410`
+日志面板每 5 秒刷新一次。启用“自动跟随”时停留在最新日志；用户向上滚动后自动暂停跟随，并显示“跳到最新”。
 
-强烈建议：
+## 从源码构建
 
-- 仅在本机或受限内网中使用
-- 若必须对外暴露，请自行放在反向代理、鉴权与 TLS 后面
-- 不要把“无需登录”的当前实现直接暴露到公网
+本地要求：Go 1.24、Node.js 20.19 或兼容版本。
 
-## 失败路径与回滚语义
+```bash
+npm ci --prefix web
+npm run build --prefix web
+go test ./...
+go build -o frpc-web ./cmd/frpc-web
+```
 
-### 更新 `frps` / `frpc`
+前端构建产物会写入 `cmd/frpc-web/static/`，随后由 `go:embed` 编译进 Go 二进制。运行二进制不需要 Node.js 或 Python。
 
-当前版本的更新流程会：
-
-1. 先下载新版本到临时目录
-2. 用新版本二进制校验现有配置
-3. 通过后再停止旧服务并替换二进制
-4. 启动新版本服务
-5. 如果新版本启动失败，自动恢复上一版二进制并尝试重新拉起服务
-
-注意：
-
-- 目前回滚的是二进制文件，不是完整的系统快照
-- 如果回滚后的服务也无法启动，需要结合 `systemctl status` 与日志排障
-
-### Web 控制台“保存并重启”
-
-保存时会先校验新配置，再写入配置文件。
-
-- 如果只点“保存配置”，会保存并保留当前运行状态
-- 如果点“保存并重启”，而 `frpc` 重启失败，脚本会自动回滚到上一份配置并尝试恢复服务
-
-## systemd 服务
-
-脚本会创建或使用这些服务：
-
-- `frps.service`
-- `frpc.service`
-- `frpc-web.service`
-
-常用命令：
+## 服务管理
 
 ```bash
 systemctl status frps
@@ -147,17 +105,21 @@ systemctl status frpc-web
 ```
 
 ```bash
-systemctl restart frps
 systemctl restart frpc
 systemctl restart frpc-web
 ```
 
-## 文档导航
+## 安全提醒
+
+- 安装脚本以 root 身份写入 `/usr/local`、`/etc` 和 systemd 服务
+- Web 控制台拥有修改 frpc 配置和控制 `frpc.service` 的权限
+- `/etc/frpc-web.env` 权限为 `600`，不要公开其中的访问令牌
+- 默认直接使用 GitHub HTTPS。确需代理时可设置 `FRP_GITHUB_ACCEL_PREFIX`，脚本只接受 HTTPS 前缀
+- Release checksum 用于检测下载损坏；高安全场景仍建议增加独立签名校验
+- 不要直接将 `7410` 端口暴露到公网
+
+## 文档
 
 - [运维说明](./docs/operations.md)
 - [Web 控制台 API](./docs/web-console-api.md)
 - [排障说明](./docs/troubleshooting.md)
-
-## 说明
-
-这个仓库仍然是一个偏实用型脚本，不是完整的部署平台。目标是减少手工安装成本，但你仍然应该把它当成运维脚本，而不是零风险的托管服务。
