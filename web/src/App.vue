@@ -29,8 +29,10 @@ const editVersion = ref(0)
 const revision = ref<string | null>(null)
 const configExists = ref(false)
 const busy = ref<string | null>(null)
-const message = ref('正在连接 frpc Web 控制台…')
+const message = ref('')
 const messageTone = ref<Tone>('info')
+const messageVisible = ref(false)
+let messageTimer: number | undefined
 
 const logs = ref('')
 const logsBusy = ref(false)
@@ -69,9 +71,20 @@ async function api<T>(path: string, init: RequestInit = {}): Promise<ApiEnvelope
   return payload
 }
 
+function dismissMessage() {
+  messageVisible.value = false
+  if (messageTimer !== undefined) {
+    window.clearTimeout(messageTimer)
+    messageTimer = undefined
+  }
+}
+
 function notify(text: string, tone: Tone = 'info') {
   message.value = text
   messageTone.value = tone
+  messageVisible.value = true
+  if (messageTimer !== undefined) window.clearTimeout(messageTimer)
+  messageTimer = window.setTimeout(dismissMessage, tone === 'danger' ? 8000 : 5000)
 }
 
 async function refreshStatus(silent = false) {
@@ -224,6 +237,7 @@ function keySave(event: KeyboardEvent) {
 }
 
 onMounted(() => {
+  notify('正在连接 frpc Web 控制台…')
   window.addEventListener('keydown', keySave)
   window.addEventListener('beforeunload', preventDirtyUnload)
   void bootConsole()
@@ -239,6 +253,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', keySave)
   window.removeEventListener('beforeunload', preventDirtyUnload)
   if (logTimer) window.clearInterval(logTimer)
+  dismissMessage()
 })
 </script>
 
@@ -340,12 +355,15 @@ onBeforeUnmount(() => {
       </section>
     </div>
 
-    <div class="fixed bottom-4 left-1/2 z-50 w-[min(680px,calc(100%-24px))] -translate-x-1/2 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg"
+    <div v-if="messageVisible" class="fixed bottom-4 left-1/2 z-50 flex w-[min(680px,calc(100%-24px))] -translate-x-1/2 items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg"
       :class="{
         'border-blue-200 bg-blue-50 text-blue-900': messageTone === 'info',
         'border-emerald-200 bg-emerald-50 text-emerald-900': messageTone === 'success',
         'border-amber-200 bg-amber-50 text-amber-900': messageTone === 'warning',
         'border-red-200 bg-red-50 text-red-900': messageTone === 'danger',
-      }" role="status" aria-live="polite">{{ message }}</div>
+      }" role="status" aria-live="polite">
+      <span class="min-w-0 break-words">{{ message }}</span>
+      <button type="button" class="shrink-0 rounded px-1 text-lg leading-none opacity-70 hover:opacity-100" aria-label="关闭通知" @click="dismissMessage">×</button>
+    </div>
   </div>
 </template>
