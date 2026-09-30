@@ -21,6 +21,7 @@ type Server struct {
 	Service    SystemService
 	FRPCBin    string
 	ConfigPath string
+	Updater    *Updater
 }
 
 type apiResponse struct {
@@ -36,6 +37,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/logs", s.handleLogs)
 	mux.HandleFunc("/api/verify", s.handleVerify)
 	mux.HandleFunc("/api/service", s.handleService)
+	mux.HandleFunc("/api/update", s.handleUpdate)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusNotFound, apiResponse{OK: false, Message: "Not Found"})
 	})
@@ -178,6 +180,46 @@ func (s *Server) handleService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, apiResponse{OK: true, Message: "frpc 已执行 " + request.Action})
+}
+
+func (s *Server) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	if s.Updater == nil {
+		writeJSON(w, http.StatusServiceUnavailable, apiResponse{OK: false, Message: "更新服务未配置"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		info, err := s.Updater.Check(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusBadGateway, apiResponse{OK: false, Message: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResponse{OK: true, Data: info})
+	case http.MethodPost:
+		if err := validateSameOrigin(r); err != nil {
+			writeJSON(w, http.StatusForbidden, apiResponse{OK: false, Message: err.Error()})
+			return
+		}
+		var request struct {
+			Version string `json:"version"`
+		}
+		if err := decodeJSON(w, r, &request); err != nil {
+			writeRequestError(w, err)
+			return
+		}
+		info, err := s.Updater.Update(r.Context(), request.Version)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, ErrUpdateConflict) || errors.Is(err, ErrUpdateBusy) {
+				status = http.StatusConflict
+			}
+			writeJSON(w, status, apiResponse{OK: false, Message: err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, apiResponse{OK: true, Data: info, Message: "frpc 已更新到 " + info.Current})
+	default:
+		methodNotAllowed(w)
+	}
 }
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {

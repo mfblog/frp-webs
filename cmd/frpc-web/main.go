@@ -49,6 +49,9 @@ func main() {
 		Service:    service,
 		FRPCBin:    paths.FRPCBin,
 		ConfigPath: paths.ConfigPath,
+		Updater: &control.Updater{
+			Runner: runner, Service: service, Bin: paths.FRPCBin, ConfigPath: paths.ConfigPath, Config: manager,
+		},
 	}
 
 	httpServer := &http.Server{
@@ -56,7 +59,7 @@ func main() {
 		Handler:           application.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       20 * time.Second,
-		WriteTimeout:      20 * time.Second,
+		WriteTimeout:      3 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 	log.Printf("frpc Web 控制台监听 %s（frpc=%s，config=%s）", *listen, paths.FRPCBin, paths.ConfigPath)

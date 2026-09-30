@@ -16,6 +16,7 @@ interface StatusData {
   discovery?: DiscoveryInfo
 }
 interface ConfigData { content: string; exists: boolean; revision: string | null }
+interface UpdateData { current: string; latest: string; available: boolean }
 
 const activeTab = ref<Tab>('config')
 
@@ -29,6 +30,8 @@ const editVersion = ref(0)
 const revision = ref<string | null>(null)
 const configExists = ref(false)
 const busy = ref<string | null>(null)
+const pendingUpdate = ref<UpdateData | null>(null)
+const updateBusy = ref(false)
 const message = ref('')
 const messageTone = ref<Tone>('info')
 const messageVisible = ref(false)
@@ -218,7 +221,38 @@ function jumpToLatest() {
   void scrollLogsToBottom()
 }
 
+async function checkUpdate() {
+  try {
+    const result = await api<UpdateData>('/api/update')
+    if (result.data?.available) pendingUpdate.value = result.data
+  } catch (error) {
+    notify(error instanceof Error ? `检测 frpc 更新失败：${error.message}` : '检测 frpc 更新失败', 'warning')
+  }
+}
+
+async function applyUpdate() {
+  const target = pendingUpdate.value
+  if (!target || updateBusy.value || busy.value) return
+  updateBusy.value = true
+  try {
+    const result = await api<UpdateData>('/api/update', {
+      method: 'POST', body: JSON.stringify({ version: target.latest }),
+    })
+    pendingUpdate.value = null
+    notify(result.message || 'frpc 更新成功。', 'success')
+    await refreshStatus(true)
+    await refreshLogs(false)
+  } catch (error) {
+    notify(error instanceof Error ? error.message : 'frpc 更新失败', 'danger')
+    pendingUpdate.value = null
+    await refreshStatus(true)
+  } finally {
+    updateBusy.value = false
+  }
+}
+
 async function bootConsole() {
+  void checkUpdate()
   await Promise.all([refreshStatus(true), loadConfig(true), refreshLogs(false)])
   if (logTimer) window.clearInterval(logTimer)
   logTimer = window.setInterval(() => void refreshLogs(false), 5000)
@@ -232,7 +266,7 @@ function formatTime(timestamp: number | null) {
 function keySave(event: KeyboardEvent) {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
     event.preventDefault()
-    if (dirty.value && !busy.value) void saveConfig(false)
+    if (dirty.value && !busy.value && !updateBusy.value) void saveConfig(false)
   }
 }
 
@@ -273,7 +307,7 @@ onBeforeUnmount(() => {
             {{ isActive ? '运行中' : status.active }}
           </span>
           <span class="hidden rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-700 sm:inline">v{{ status.version }}</span>
-          <button class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50" :disabled="busy !== null" @click="refreshStatus()">刷新状态</button>
+          <button class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 hover:bg-slate-50" :disabled="busy !== null || updateBusy" @click="refreshStatus()">刷新状态</button>
         </div>
       </div>
     </header>
@@ -294,8 +328,8 @@ onBeforeUnmount(() => {
             <p class="mt-1 max-w-[70ch] break-all text-xs text-slate-600">{{ discoveredConfig }}</p>
           </div>
           <div class="flex flex-wrap gap-2">
-            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null" @click="loadConfig()">重新读取</button>
-            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || !config.trim()" @click="verifyConfig">{{ busy === 'verify' ? '校验中…' : '校验配置' }}</button>
+            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || updateBusy" @click="loadConfig()">重新读取</button>
+            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || updateBusy || !config.trim()" @click="verifyConfig">{{ busy === 'verify' ? '校验中…' : '校验配置' }}</button>
           </div>
         </div>
         <textarea v-model="config" aria-label="frpc.toml 配置内容" spellcheck="false" @input="editVersion++"
@@ -304,8 +338,8 @@ onBeforeUnmount(() => {
         <div class="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
           <p class="text-xs text-slate-600">支持 Ctrl/Cmd + S 保存。启动前会先执行 frpc 配置校验。</p>
           <div class="flex flex-col gap-2 sm:flex-row">
-            <button class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || !dirty" @click="saveConfig(false)">{{ busy === 'save' ? '保存中…' : '仅保存' }}</button>
-            <button class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="busy !== null || (!dirty && isActive) || !config.trim()" @click="saveConfig(true)">{{ busy === 'save-restart' ? '处理中…' : primaryAction }}</button>
+            <button class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-bold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || updateBusy || !dirty" @click="saveConfig(false)">{{ busy === 'save' ? '保存中…' : '仅保存' }}</button>
+            <button class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="busy !== null || updateBusy || (!dirty && isActive) || !config.trim()" @click="saveConfig(true)">{{ busy === 'save-restart' ? '处理中…' : primaryAction }}</button>
           </div>
         </div>
       </section>
@@ -325,9 +359,9 @@ onBeforeUnmount(() => {
           <h3 class="text-sm font-bold text-slate-900">服务操作</h3>
           <p class="mt-1 text-xs leading-5 text-slate-600">启动和重启需要磁盘中存在有效配置。</p>
           <div class="mt-4 grid grid-cols-2 gap-2">
-            <button class="rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="busy !== null || !configExists" @click="serviceAction('start')">启动</button>
-            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-bold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || !configExists" @click="serviceAction('restart')">重启</button>
-            <button class="col-span-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm font-bold text-red-800 hover:bg-red-100 disabled:opacity-50" :disabled="busy !== null || !isActive" @click="serviceAction('stop')">停止服务</button>
+            <button class="rounded-lg bg-blue-600 px-3 py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50" :disabled="busy !== null || updateBusy || !configExists" @click="serviceAction('start')">启动</button>
+            <button class="rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-bold hover:bg-slate-50 disabled:opacity-50" :disabled="busy !== null || updateBusy || !configExists" @click="serviceAction('restart')">重启</button>
+            <button class="col-span-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm font-bold text-red-800 hover:bg-red-100 disabled:opacity-50" :disabled="busy !== null || updateBusy || !isActive" @click="serviceAction('stop')">停止服务</button>
           </div>
         </div>
       </aside>
@@ -353,6 +387,19 @@ onBeforeUnmount(() => {
           <pre v-else class="m-0 whitespace-pre-wrap break-words font-inherit">{{ logs }}</pre>
         </div>
       </section>
+    </div>
+
+    <div v-if="pendingUpdate" role="dialog" aria-modal="true" aria-labelledby="update-title" class="fixed inset-0 z-40 grid place-items-center bg-slate-950/60 p-4">
+      <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl">
+        <h2 id="update-title" class="text-lg font-bold text-slate-900">发现 frpc 新版本</h2>
+        <p class="mt-3 text-sm text-slate-700">当前版本 {{ pendingUpdate.current }}，最新版本 {{ pendingUpdate.latest }}。是否现在更新？</p>
+        <p class="mt-2 text-xs text-amber-800">更新会下载并校验安装包，校验现有配置；运行中的 frpc 将短暂重启。失败时尝试恢复旧版本。</p>
+        <p v-if="dirty" class="mt-2 text-xs text-amber-800">当前有未保存的配置修改，更新不会保存这些修改。</p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="button" class="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold" :disabled="updateBusy" @click="pendingUpdate = null">稍后再说</button>
+          <button type="button" class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50" :disabled="updateBusy || busy !== null" @click="applyUpdate">{{ updateBusy ? '正在更新…' : '确认更新' }}</button>
+        </div>
+      </div>
     </div>
 
     <div v-if="messageVisible" class="fixed bottom-4 left-1/2 z-50 flex w-[min(680px,calc(100%-24px))] -translate-x-1/2 items-start justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-semibold shadow-lg"
